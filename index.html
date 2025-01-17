@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vibes to Chords</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>Vibes to Chords</h1>
+        
+        <div class="input-section">
+            <textarea id="mood-input" placeholder="Describe a scene or mood (e.g., 'sunset on a peaceful beach' or 'energetic dance party')"></textarea>
+            <div class="generation-controls">
+                <label class="measure-select">
+                    Length:
+                    <select id="measures-select">
+                        <option value="1">1 measure (4 chords)</option>
+                        <option value="2">2 measures (8 chords)</option>
+                        <option value="3">3 measures (12 chords)</option>
+                        <option value="4">4 measures (16 chords)</option>
+                    </select>
+                </label>
+                <button id="generate-btn">Generate Chord Progression</button>
+            </div>
+        </div>
+
+        <div class="output-section" id="results-section" style="display: none;">
+            <h2>Generated Chord Progression:</h2>
+            <div id="chord-display" class="chord-display"></div>
+            
+            <div class="playback-controls">
+                <div class="settings">
+                    <label>
+                        BPM:
+                        <input type="number" id="bpm-input" value="120" min="40" max="200">
+                    </label>
+                    <label>
+                        Instrument:
+                        <select id="instrument-select">
+                            <option value="piano">Piano</option>
+                            <option value="synth">Synth</option>
+                            <option value="electric">Electric Piano</option>
+                        </select>
+                    </label>
+                </div>
+                <div class="transport-controls">
+                    <button id="play-btn" class="control-btn">Play</button>
+                    <button id="stop-btn" class="control-btn" disabled>Stop</button>
+                </div>
+                <div id="current-chord" class="current-chord"></div>
+            </div>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
