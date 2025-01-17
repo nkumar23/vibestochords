@@ -1,12 +1,6 @@
-require('dotenv').config();
-const express = require('express');
 const OpenAI = require('openai');
-const path = require('path');
 
-const app = express();
-const port = process.env.PORT || 3000;
-
-// Define a comprehensive list of jazz chords
+// Define valid chords list
 const validChords = [
     // Basic major chords
     'C', 'D', 'E', 'F', 'G', 'A', 'B',
@@ -81,32 +75,35 @@ const validChords = [
     'Db7sus4', 'Eb7sus4', 'Gb7sus4', 'Ab7sus4', 'Bb7sus4'
 ];
 
-// Middleware
-app.use(express.json());
-app.use(express.static(path.join(__dirname, '.')));
+exports.handler = async function(event, context) {
+    // Only allow POST requests
+    if (event.httpMethod !== 'POST') {
+        return {
+            statusCode: 405,
+            body: JSON.stringify({ error: 'Method not allowed' })
+        };
+    }
 
-// API endpoint for chord generation
-app.post('/api/generate-chords', async (req, res) => {
     try {
-        const { mood, apiKey } = req.body;
-        
+        const { mood, apiKey, measures = 1 } = JSON.parse(event.body);
+        const numChords = measures * 4; // 4 chords per measure
+
         if (!apiKey) {
-            return res.status(400).json({ error: 'OpenAI API key is required' });
+            return {
+                statusCode: 400,
+                body: JSON.stringify({ error: 'OpenAI API key is required' })
+            };
+        }
+
+        if (!mood) {
+            return {
+                statusCode: 400,
+                body: JSON.stringify({ error: 'Mood description is required' })
+            };
         }
 
         const openai = new OpenAI({ apiKey });
-        
-        const { measures = 1 } = req.body;
-        const numChords = measures * 4; // 4 chords per measure
-        
-        console.log('Received mood:', mood);
-        console.log('Requested measures:', measures);
-        
-        if (!mood) {
-            return res.status(400).json({ error: 'Mood description is required' });
-        }
 
-        console.log('Making OpenAI API call...');
         const completion = await openai.chat.completions.create({
             model: "gpt-3.5-turbo",
             messages: [
@@ -125,76 +122,65 @@ app.post('/api/generate-chords', async (req, res) => {
         });
 
         const responseContent = completion.choices[0].message.content;
-        console.log('Raw OpenAI response:', responseContent);
+        const parsedResponse = JSON.parse(responseContent);
 
-        // Try to parse the response as JSON
-        let parsedResponse;
-        try {
-            parsedResponse = JSON.parse(responseContent);
-        } catch (parseError) {
-            console.error('JSON Parse Error:', parseError);
-            return res.status(500).json({
-                error: 'Failed to parse OpenAI response as JSON',
-                raw_response: responseContent
-            });
-        }
-
-        // Extract the chord progression
         if (!parsedResponse.chords) {
-            console.error('Response missing chords array:', parsedResponse);
-            return res.status(500).json({
-                error: 'Invalid response format: missing chords array',
-                response: parsedResponse
-            });
+            return {
+                statusCode: 500,
+                body: JSON.stringify({
+                    error: 'Invalid response format: missing chords array',
+                    response: parsedResponse
+                })
+            };
         }
 
         const chordProgression = parsedResponse.chords;
         
-        // Validate the chord progression
         if (!Array.isArray(chordProgression)) {
-            console.error('Chords is not an array:', chordProgression);
-            return res.status(500).json({
-                error: 'Invalid response format: chords is not an array',
-                response: chordProgression
-            });
+            return {
+                statusCode: 500,
+                body: JSON.stringify({
+                    error: 'Invalid response format: chords is not an array',
+                    response: chordProgression
+                })
+            };
         }
 
         if (chordProgression.length !== numChords) {
-            console.error(`Wrong number of chords: got ${chordProgression.length}, expected ${numChords}`);
-            return res.status(500).json({
-                error: `Invalid response format: must have exactly ${numChords} chords`,
-                chords: chordProgression
-            });
+            return {
+                statusCode: 500,
+                body: JSON.stringify({
+                    error: `Invalid response format: must have exactly ${numChords} chords`,
+                    chords: chordProgression
+                })
+            };
         }
 
         const invalidChords = chordProgression.filter(chord => !validChords.includes(chord));
         
         if (invalidChords.length > 0) {
-            console.error('Invalid chord names found:', invalidChords);
-            return res.status(500).json({
-                error: 'Invalid chord names in response',
-                invalid_chords: invalidChords,
-                valid_chords: validChords
-            });
+            return {
+                statusCode: 500,
+                body: JSON.stringify({
+                    error: 'Invalid chord names in response',
+                    invalid_chords: invalidChords,
+                    valid_chords: validChords
+                })
+            };
         }
 
-        console.log('Successfully generated chord progression:', chordProgression);
-        res.json({ chords: chordProgression });
+        return {
+            statusCode: 200,
+            body: JSON.stringify({ chords: chordProgression })
+        };
     } catch (error) {
-        console.error('OpenAI API Error:', error);
-        console.error('Full error details:', {
-            message: error.message,
-            stack: error.stack,
-            response: error.response?.data
-        });
-        res.status(500).json({ 
-            error: 'Failed to generate chord progression',
-            details: error.message
-        });
+        console.error('Error:', error);
+        return {
+            statusCode: 500,
+            body: JSON.stringify({ 
+                error: 'Failed to generate chord progression',
+                details: error.message
+            })
+        };
     }
-});
-
-app.listen(port, () => {
-    console.log(`Server running at http://localhost:3000`);
-    console.log('OpenAI API Key present:', !!process.env.OPENAI_API_KEY);
-});
+}; 

@@ -1,0 +1,21 @@
+.generation-controls {
+    margin: 10px 0;
+    display: flex;
+    gap: 15px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.api-key {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+#api-key-input {
+    padding: 8px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    width: 300px;
+    font-family: monospace;
+} 

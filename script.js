@@ -442,32 +442,35 @@ function stopPlayback() {
 
 async function generateChords() {
     const moodInput = document.getElementById('mood-input').value;
-    if (!moodInput.trim()) {
-        alert('Please enter a mood or scene description');
+    const measuresSelect = document.getElementById('measures-select');
+    const measures = parseInt(measuresSelect.value);
+    const apiKey = document.getElementById('api-key-input').value;
+
+    if (!apiKey) {
+        alert('Please enter your OpenAI API key');
         return;
     }
 
-    // Show loading state
     const generateBtn = document.getElementById('generate-btn');
     generateBtn.disabled = true;
     generateBtn.textContent = 'Generating...';
 
     try {
-        const measures = parseInt(document.getElementById('measures-select').value);
-        const response = await fetch('/api/generate-chords', {
+        const response = await fetch('/.netlify/functions/generate-chords', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ 
+            body: JSON.stringify({
                 mood: moodInput,
-                measures: measures
-            }),
+                measures,
+                apiKey
+            })
         });
 
         if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error || 'Failed to generate chords');
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to generate chords');
         }
 
         const data = await response.json();
@@ -483,15 +486,12 @@ async function generateChords() {
         
         document.getElementById('chord-display').textContent = chordsWithBreaks;
         document.getElementById('results-section').style.display = 'block';
-        
-        // Enable play button
         document.getElementById('play-btn').disabled = false;
         
     } catch (error) {
         console.error('Error:', error);
         alert('Failed to generate chord progression. Please try again.');
     } finally {
-        // Reset generate button
         generateBtn.disabled = false;
         generateBtn.textContent = 'Generate Chord Progression';
     }
