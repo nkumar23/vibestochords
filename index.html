@@ -37,6 +37,15 @@
             <div id="chord-display" class="chord-display"></div>
             
             <div class="playback-controls">
+                <div class="mode-toggle">
+                    <label>
+                        Mode:
+                        <select id="playback-mode">
+                            <option value="chords">Chords</option>
+                            <option value="lead">Lead Line</option>
+                        </select>
+                    </label>
+                </div>
                 <div class="settings">
                     <label>
                         BPM:
@@ -48,6 +57,25 @@
                             <option value="piano">Piano</option>
                             <option value="synth">Synth</option>
                             <option value="electric">Electric Piano</option>
+                            <option value="lead">Lead Synth</option>
+                            <option value="flute">Flute</option>
+                        </select>
+                    </label>
+                    <label class="lead-control">
+                        Note Density:
+                        <select id="density-select">
+                            <option value="sparse">Sparse</option>
+                            <option value="medium" selected>Medium</option>
+                            <option value="dense">Dense</option>
+                        </select>
+                    </label>
+                    <label class="lead-control">
+                        Style Persona:
+                        <select id="persona-select">
+                            <option value="default">Default</option>
+                            <option value="coltrane">John Coltrane (Modal Jazz)</option>
+                            <option value="greenwood">Jonny Greenwood (Art Rock)</option>
+                            <option value="kennyg">Kenny G (Smooth Jazz)</option>
                         </select>
                     </label>
                 </div>

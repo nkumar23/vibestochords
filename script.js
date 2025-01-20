@@ -7,6 +7,13 @@ let isAudioInitialized = false;
 let synth;
 let loop;
 
+// Add to the top with other global variables
+let leadSynth;
+let currentMode = 'chords';
+
+// Add after the global variables at the top
+let previousVoicing = null;
+
 // Chord to notes mapping
 const chordToNotes = {
     // Power chords (root and fifth)
@@ -273,6 +280,151 @@ const flatChordMappings = {
 // Merge the flat chord mappings with the existing chordToNotes object
 Object.assign(chordToNotes, flatChordMappings);
 
+// Add after the chordToNotes object and before initAudio
+
+function generateChordVoicing(chord) {
+    const notes = chordToNotes[chord];
+    if (!notes) return null;
+
+    // Get the base notes of the chord
+    const baseNotes = notes.map(note => {
+        const pitch = Tone.Frequency(note).toMidi();
+        return { note, pitch };
+    });
+
+    // If we have a previous voicing, try to minimize movement
+    if (previousVoicing) {
+        // Convert previous voicing to MIDI numbers for comparison
+        const prevPitches = previousVoicing.map(note => Tone.Frequency(note).toMidi());
+        
+        // Find the closest voicing
+        let bestVoicing = null;
+        let minTotalDistance = Infinity;
+        
+        // Try different octave adjustments for each note
+        const octaveRange = [-1, 0, 1]; // Try one octave up and down
+        const maxCombinations = 100; // Limit the number of combinations to try
+        let combinations = 0;
+        
+        function tryVoicing(currentVoicing = [], noteIndex = 0) {
+            if (combinations >= maxCombinations) return;
+            if (noteIndex === baseNotes.length) {
+                // Calculate total distance from previous voicing
+                let totalDistance = 0;
+                const voicingPitches = currentVoicing.map(n => n.pitch);
+                
+                // Calculate voice leading distance
+                for (let i = 0; i < Math.min(prevPitches.length, voicingPitches.length); i++) {
+                    totalDistance += Math.abs(prevPitches[i] - voicingPitches[i]);
+                }
+                
+                // Check range between highest and lowest notes
+                const range = Math.max(...voicingPitches) - Math.min(...voicingPitches);
+                if (range <= 24) { // Maximum 2 octave spread
+                    if (totalDistance < minTotalDistance) {
+                        minTotalDistance = totalDistance;
+                        bestVoicing = currentVoicing.map(n => n.note);
+                    }
+                }
+                combinations++;
+                return;
+            }
+            
+            // Try each octave adjustment for this note
+            for (const octave of octaveRange) {
+                const pitch = baseNotes[noteIndex].pitch + (octave * 12);
+                const note = Tone.Frequency(pitch, 'midi').toNote();
+                tryVoicing([...currentVoicing, { note, pitch }], noteIndex + 1);
+            }
+        }
+        
+        tryVoicing();
+        
+        if (bestVoicing) {
+            previousVoicing = bestVoicing;
+            return bestVoicing;
+        }
+    }
+
+    // If no previous voicing or couldn't find good voice leading, use standard voicing patterns
+    const voicingPatterns = [
+        // Root position
+        [0, 1, 2, 3, 4],
+        // First inversion (third in bass)
+        [1, 2, 3, 4, 0],
+        // Second inversion (fifth in bass)
+        [2, 3, 4, 0, 1],
+        // Drop 2 voicing
+        [0, 2, 1, 3, 4],
+        // Drop 3 voicing
+        [0, 3, 1, 2, 4]
+    ];
+
+    const pattern = voicingPatterns[Math.floor(Math.random() * voicingPatterns.length)];
+    let voicing = pattern.map(i => {
+        if (typeof i === 'number' && baseNotes[i]) {
+            const octaveAdjust = Math.floor(i / baseNotes.length) * 12;
+            return {
+                note: Tone.Frequency(baseNotes[i].pitch + octaveAdjust).toNote(),
+                pitch: baseNotes[i].pitch + octaveAdjust
+            };
+        }
+        return null;
+    }).filter(n => n);
+
+    // Ensure reasonable range
+    const range = voicing[voicing.length - 1].pitch - voicing[0].pitch;
+    if (range > 24) {
+        voicing = voicing.map(n => {
+            if (n.pitch - voicing[0].pitch > 24) {
+                return {
+                    note: Tone.Frequency(n.pitch - 12).toNote(),
+                    pitch: n.pitch - 12
+                };
+            }
+            return n;
+        });
+    }
+
+    const result = voicing.map(n => n.note);
+    previousVoicing = result;
+    return result;
+}
+
+// Modify the playChord function
+function playChord(chord, time) {
+    if (currentMode === 'chords') {
+        const voicing = generateChordVoicing(chord);
+        if (!voicing) return;
+
+        const duration = "1n";
+        const velocity = 0.7;
+
+        // Play the bass note slightly earlier and louder
+        synth.triggerAttackRelease(voicing[0], duration, time - 0.02, velocity + 0.1);
+        
+        // Stagger the remaining notes
+        for (let i = 1; i < voicing.length; i++) {
+            const noteTime = time + (i * 0.02);
+            const noteVelocity = velocity - (i * 0.05);
+            synth.triggerAttackRelease(voicing[i], duration, noteTime, noteVelocity);
+        }
+    } else {
+        // Lead line mode
+        const scale = getScaleForChord(chord);
+        const density = document.getElementById('density-select').value;
+        const melody = generateMelodyForChord(chord, scale, density);
+
+        let noteTime = time;
+        melody.forEach(({ note, duration }) => {
+            if (note) {
+                leadSynth.triggerAttackRelease(note, duration, noteTime, 0.7);
+            }
+            noteTime += Tone.Time(duration).toSeconds();
+        });
+    }
+}
+
 // Initialize Tone.js instruments
 async function initAudio() {
     if (isAudioInitialized) return;
@@ -281,16 +433,14 @@ async function initAudio() {
         await Tone.start();
         console.log('Audio is ready');
         
-        // Create synth based on selected instrument
         createInstrument(document.getElementById('instrument-select').value);
+        createLeadInstrument('lead');
         
-        // Set up reverb for better sound
         const reverb = new Tone.Reverb({
             decay: 2,
             wet: 0.2
         }).toDestination();
         
-        // Add compression for better dynamics
         const compressor = new Tone.Compressor({
             threshold: -24,
             ratio: 4,
@@ -298,13 +448,15 @@ async function initAudio() {
             release: 0.1
         }).toDestination();
         
-        // Connect effects
         if (synth) {
             synth.connect(compressor);
             synth.connect(reverb);
         }
+        if (leadSynth) {
+            leadSynth.connect(compressor);
+            leadSynth.connect(reverb);
+        }
         
-        // Create the loop but don't start it
         loop = new Tone.Loop(time => {
             if (currentChords.length > 0) {
                 const chord = currentChords[currentChordIndex];
@@ -314,7 +466,6 @@ async function initAudio() {
             }
         }, "1n").start(0);
         
-        // Set initial tempo
         Tone.Transport.bpm.value = parseInt(document.getElementById('bpm-input').value);
         isAudioInitialized = true;
     } catch (error) {
@@ -377,27 +528,56 @@ function createInstrument(type) {
     }
 }
 
-function updateCurrentChordDisplay(chord) {
-    document.getElementById('current-chord').textContent = chord;
+function createLeadInstrument(type) {
+    if (leadSynth) {
+        leadSynth.dispose();
+    }
+
+    const commonSettings = {
+        volume: -8,
+        envelope: {
+            attack: 0.05,
+            decay: 0.2,
+            sustain: 0.4,
+            release: 0.5
+        }
+    };
+
+    switch (type) {
+        case 'lead':
+            leadSynth = new Tone.Synth({
+                oscillator: {
+                    type: 'sawtooth',
+                    partials: [1, 0.5, 0.3]
+                },
+                envelope: {
+                    ...commonSettings.envelope,
+                    sustain: 0.3
+                },
+                volume: -10
+            }).toDestination();
+            break;
+        case 'flute':
+            leadSynth = new Tone.Synth({
+                oscillator: {
+                    type: 'sine',
+                    partials: [1, 0.3, 0.1]
+                },
+                envelope: {
+                    ...commonSettings.envelope,
+                    attack: 0.1,
+                    sustain: 0.5
+                },
+                volume: -12
+            }).toDestination();
+            break;
+        default:
+            leadSynth = new Tone.Synth(commonSettings).toDestination();
+    }
 }
 
-function playChord(chord, time) {
-    const notes = chordToNotes[chord];
-    if (!notes) return;
-
-    // Add slight timing variations for more natural sound
-    const duration = "1n";  // one measure
-    const velocity = 0.7;   // not too loud
-
-    // Play root note slightly earlier and louder
-    synth.triggerAttackRelease(notes[0], duration, time - 0.02, velocity + 0.1);
-    
-    // Stagger the remaining notes slightly
-    for (let i = 1; i < notes.length; i++) {
-        const noteTime = time + (i * 0.02);
-        const noteVelocity = velocity - (i * 0.05); // decrease velocity for upper notes
-        synth.triggerAttackRelease(notes[i], duration, noteTime, noteVelocity);
-    }
+function updateCurrentChordDisplay(chord) {
+    document.getElementById('current-chord').textContent = chord;
 }
 
 async function togglePlayback() {
@@ -438,6 +618,7 @@ function stopPlayback() {
     document.getElementById('play-btn').textContent = 'Play';
     document.getElementById('stop-btn').disabled = true;
     document.getElementById('current-chord').textContent = '';
+    previousVoicing = null; // Reset voice leading when stopping
 }
 
 async function generateChords() {
@@ -518,4 +699,194 @@ document.addEventListener('DOMContentLoaded', () => {
             createInstrument(e.target.value);
         }
     });
+
+    document.getElementById('playback-mode').addEventListener('change', (e) => {
+        currentMode = e.target.value;
+        document.body.classList.toggle('lead-mode', currentMode === 'lead');
+        
+        // Update instrument options based on mode
+        const instrumentSelect = document.getElementById('instrument-select');
+        if (currentMode === 'lead') {
+            instrumentSelect.value = 'lead';
+            createLeadInstrument('lead');
+        } else {
+            instrumentSelect.value = 'piano';
+            createInstrument('piano');
+        }
+    });
+
+    document.getElementById('density-select').addEventListener('change', () => {
+        if (isPlaying) {
+            stopPlayback();
+            startPlayback();
+        }
+    });
 });
+
+// Add these utility functions for lead line generation
+function getScaleForChord(chord) {
+    // Extract root note and chord quality
+    const root = chord.replace(/maj7|m7|7|m|aug|dim7|dim|sus[24]|[0-9]/g, '');
+    const quality = chord.replace(root, '');
+    
+    // Define scale patterns (intervals from root)
+    const scalePatterns = {
+        '': [0, 2, 4, 5, 7, 9, 11], // major
+        'm': [0, 2, 3, 5, 7, 8, 10], // minor
+        '7': [0, 2, 4, 5, 7, 9, 10], // mixolydian
+        'maj7': [0, 2, 4, 5, 7, 9, 11], // major
+        'm7': [0, 2, 3, 5, 7, 8, 10], // dorian
+        'dim': [0, 2, 3, 5, 6, 8, 9], // diminished
+        'aug': [0, 2, 4, 6, 8, 10], // whole tone
+    };
+
+    // Get base pattern
+    let pattern = scalePatterns[''];
+    Object.keys(scalePatterns).forEach(quality => {
+        if (chord.includes(quality)) {
+            pattern = scalePatterns[quality];
+        }
+    });
+
+    // Convert root note to MIDI number
+    const noteToMidi = {
+        'C': 60, 'C#': 61, 'Db': 61, 'D': 62, 'D#': 63, 'Eb': 63,
+        'E': 64, 'F': 65, 'F#': 66, 'Gb': 66, 'G': 67, 'G#': 68,
+        'Ab': 68, 'A': 69, 'A#': 70, 'Bb': 70, 'B': 71
+    };
+
+    const rootMidi = noteToMidi[root];
+    
+    // Generate scale notes
+    return pattern.map(interval => {
+        const midiNote = rootMidi + interval;
+        return Tone.Frequency(midiNote, 'midi').toNote();
+    });
+}
+
+function getPersonaParameters(persona) {
+    const params = {
+        default: {
+            scalePreference: 0.6,    // Probability of using scale tones
+            chordPreference: 0.3,    // Probability of using chord tones
+            restPreference: 0.1,     // Probability of using rests
+            stepwiseMotion: 0.5,     // Preference for stepwise motion
+            rhythmicComplexity: 0.5,  // Complexity of rhythmic patterns
+            registerPreference: 'mid' // Preferred register
+        },
+        coltrane: {
+            scalePreference: 0.4,
+            chordPreference: 0.5,
+            restPreference: 0.1,
+            stepwiseMotion: 0.3,
+            rhythmicComplexity: 0.8,
+            registerPreference: 'wide'
+        },
+        greenwood: {
+            scalePreference: 0.7,
+            chordPreference: 0.2,
+            restPreference: 0.1,
+            stepwiseMotion: 0.4,
+            rhythmicComplexity: 0.7,
+            registerPreference: 'high'
+        },
+        kennyg: {
+            scalePreference: 0.8,
+            chordPreference: 0.15,
+            restPreference: 0.05,
+            stepwiseMotion: 0.8,
+            rhythmicComplexity: 0.3,
+            registerPreference: 'mid'
+        }
+    };
+    return params[persona] || params.default;
+}
+
+function generateRhythmPattern(density) {
+    const persona = document.getElementById('persona-select').value;
+    const params = getPersonaParameters(persona);
+    
+    const patterns = {
+        sparse: [
+            ['4n', '4n', '4n', '4n'],
+            ['2n', '2n'],
+            ['4n', '4n.', '8n', '4n']
+        ],
+        medium: params.rhythmicComplexity > 0.6 ? [
+            ['8n', '8n', '8n', '8n', '8n', '8n', '8n', '8n'],
+            ['4n', '8n', '8n', '4n', '4n'],
+            ['8n', '8n', '4n', '8n', '8n', '4n']
+        ] : [
+            ['4n', '4n', '8n', '8n', '4n'],
+            ['4n.', '8n', '4n', '4n'],
+            ['4n', '8n', '8n', '4n', '4n']
+        ],
+        dense: params.rhythmicComplexity > 0.6 ? [
+            ['16n', '16n', '16n', '16n', '8n', '8n', '8n', '8n'],
+            ['8t', '8t', '8t', '8t', '8t', '8t', '4n', '4n'],
+            ['16n', '16n', '8n', '16n', '16n', '8n', '8n', '8n']
+        ] : [
+            ['8n', '8n', '8n', '8n', '4n', '4n'],
+            ['8n', '8n', '4n', '8n', '8n', '4n'],
+            ['8n', '4n', '8n', '4n', '4n']
+        ]
+    };
+
+    return patterns[density][Math.floor(Math.random() * patterns[density].length)];
+}
+
+function generateMelodyForChord(chord, scale, density) {
+    const rhythm = generateRhythmPattern(density);
+    const melody = [];
+    let previousNote = null;
+    
+    const persona = document.getElementById('persona-select').value;
+    const params = getPersonaParameters(persona);
+
+    // Adjust scale notes based on register preference
+    const adjustedScale = scale.map(note => {
+        const pitch = Tone.Frequency(note).toMidi();
+        switch(params.registerPreference) {
+            case 'high':
+                return Tone.Frequency(pitch + 12, 'midi').toNote();
+            case 'wide':
+                return Math.random() > 0.5 ? Tone.Frequency(pitch + 12, 'midi').toNote() : note;
+            default:
+                return note;
+        }
+    });
+
+    rhythm.forEach((duration) => {
+        let note;
+        const rand = Math.random();
+
+        if (rand < params.scalePreference) {
+            // Use scale tone
+            if (params.stepwiseMotion > Math.random() && previousNote) {
+                // Generate stepwise motion
+                const prevPitch = Tone.Frequency(previousNote).toMidi();
+                const step = Math.random() > 0.5 ? 1 : -1;
+                note = Tone.Frequency(prevPitch + step, 'midi').toNote();
+            } else {
+                note = adjustedScale[Math.floor(Math.random() * adjustedScale.length)];
+            }
+        } else if (rand < params.scalePreference + params.chordPreference) {
+            // Use chord tone
+            const chordNotes = chordToNotes[chord];
+            note = chordNotes[Math.floor(Math.random() * chordNotes.length)];
+        } else {
+            // Use rest
+            note = null;
+        }
+
+        // Avoid repeating the same note unless it's Kenny G style
+        while (note === previousNote && params.stepwiseMotion < 0.7) {
+            note = adjustedScale[Math.floor(Math.random() * adjustedScale.length)];
+        }
+        previousNote = note;
+
+        melody.push({ note, duration });
+    });
+
+    return melody;
+}
